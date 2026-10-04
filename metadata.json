@@ -1,0 +1,8 @@
+{
+  "name": "AdSpy Africa Scraper",
+  "description": "Meta Ads Library scraper for research and analysis in African markets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
