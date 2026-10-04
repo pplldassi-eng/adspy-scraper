@@ -1,9 +1,9 @@
 name: Scraper Meta Ads
 
 on:
-  workflow_dispatch:        # bouton manuel dans GitHub
+  workflow_dispatch:
   schedule:
-    - cron: '0 2 * * *'     # tous les jours à 2h UTC (2h du matin GMT)
+    - cron: '0 2 * * *'
 
 jobs:
   scrape:
@@ -11,19 +11,21 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Récupérer le code
+      - name: Recuperer le code
         uses: actions/checkout@v4
 
       - name: Installer Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Installer les dépendances
-        run: npm install
+      - name: Installer les dependances
+        run: npm install --no-audit --no-fund
 
-      - name: Installer Playwright
-        run: npx playwright install chromium --with-deps
+      - name: Installer Chromium Playwright
+        run: npx playwright install chromium
 
       - name: Lancer le scraper
         run: npx tsx scraper/index.ts
+        env:
+          NODE_OPTIONS: '--max-old-space-size=2048'
