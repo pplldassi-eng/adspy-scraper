@@ -4,6 +4,26 @@ import fs from 'fs';
 const KEYWORDS = ['blender'];
 const COUNTRIES = ['CI'];
 
+// Filtre : garde seulement les annonces e-commerce probables
+function looksLikeEcommerce(ad: any): boolean {
+  const text = (ad.text + ' ' + ad.advertiser + ' ' + ad.destinationUrl).toLowerCase();
+  // Exclusions explicites
+  const blacklist = [
+    'meshy', '3d', 'blender 3d', 'after effects', 'vfx',
+    'unity', 'unreal', 'godot', 'game', 'asset', 'animation',
+    'english tutor', 'recipe', 'vegan', 'dessert', 'cookies',
+    'wordpress', 'plugin', 'interior design', 'architecture',
+  ];
+  if (blacklist.some((w) => text.includes(w))) return false;
+  // Inclusions positives (domaines locaux, whatsapp, shopify, etc.)
+  const whitelist = [
+    '.ci', '.sn', '.cm', '.bf', '.ml', '.tg', '.bj',
+    'whatsapp', 'shop', 'store', 'brainnel', 'djokstore',
+    'livraison', 'commander', 'fcfa', 'cfa', 'f cfa',
+  ];
+  return whitelist.some((w) => text.includes(w));
+}
+
 async function scrapeAds(keyword: string, country: string) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -21,72 +41,116 @@ async function scrapeAds(keyword: string, country: string) {
     `&q=${encodeURIComponent(keyword)}` +
     `&search_type=keyword_unordered&media_type=all`;
 
-  console.log(`Recherche : "${keyword}" en ${country}`);
+  console.log(`🔍 Recherche : "${keyword}" en ${country}`);
   await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
   await page.waitForTimeout(8000);
 
-  // Scroll 10 fois pour charger plus de cartes
-  for (let i = 0; i < 10; i++) {
+  // Scroll agressif pour charger max d'annonces
+  for (let i = 0; i < 15; i++) {
     await page.evaluate(() => window.scrollBy(0, 3000));
-    await page.waitForTimeout(2000 + Math.random() * 1500);
+    await page.waitForTimeout(1500 + Math.random() * 1500);
   }
 
   fs.mkdirSync('debug', { recursive: true });
-
-  // 1. Sauvegarder le HTML et la capture
   await page.screenshot({
     path: `debug/${keyword}-${country}.png`,
     fullPage: true,
   });
-  fs.writeFileSync(
-    `debug/${keyword}-${country}.html`,
-    await page.content()
+
+  // 🔑 Extraction par TEXTE (beaucoup plus robuste que les sélecteurs CSS)
+  const pageText: string = await page.evaluate(() => document.body.innerText);
+  fs.writeFileSync(`debug/${keyword}-${country}-fulltext.txt`, pageText);
+
+  // Découpage par blocs d'annonces
+  const adBlocks = pageText.split(
+    /(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/
   );
 
-  // 2. Extraire TOUS les liens Ad Library
-  const links = await page.evaluate(() => {
-    const anchors = Array.from(
-      document.querySelectorAll('a[href*="/ads/library"]')
-    ) as HTMLAnchorElement[];
-    return anchors.map((a) => ({
-      href: a.href,
-      text: a.innerText?.slice(0, 200) || '',
-    }));
+  console.log(`📦 ${adBlocks.length} blocs bruts détectés`);
+
+  const rawAds: any[] = [];
+
+  for (const block of adBlocks) {
+    const libraryId = block.match(
+      /ID dans la bibliothèque\s*:\s*(\d+)/
+    )?.[1];
+    if (!libraryId) continue;
+
+    const startDateMatch = block.match(/Début de diffusion le\s*(.+?)(?:\n|$)/);
+    const startDate = startDateMatch?.[1]?.trim() || '';
+
+    const status = /^Actif/m.test(block.trim()) ? 'Actif' : 'Inactif';
+
+    // Annonceur : ligne juste avant "Sponsorisé"
+    const advertiserMatch = block.match(/\n([^\n]+?)\nSponsorisé/);
+    const advertiser = advertiserMatch?.[1]?.trim() || '';
+
+    // URL de destination (domaine en majuscules ex: DJOKSTORE.CI)
+    const urlMatch = block.match(/\n([A-Z][A-Z0-9.\-]+\.[A-Z]{2,})\n/);
+    const destinationUrl = urlMatch?.[1]?.trim() || '';
+
+    // CTA
+    const ctaMatch = block.match(
+      /\n(Commander|Learn More|S'inscrire|Shop Now|Send WhatsApp Message|Acheter|Download|Order Now|Envoyer un message WhatsApp)\n?/
+    );
+    const cta = ctaMatch?.[1] || '';
+
+    // Texte de la pub : entre "Sponsorisé" et le 1er marqueur (vidéo/URL/CTA)
+    let text = '';
+    const sponsoIdx = block.indexOf('Sponsorisé');
+    if (sponsoIdx >= 0) {
+      const after = block.slice(sponsoIdx + 'Sponsorisé'.length);
+      const stop = after.match(
+        /\n(?=\d+:\d+\s*\/|\n[A-Z][A-Z0-9.\-]+\.[A-Z]{2,}\n|Commander|Learn More|Shop Now|S'inscrire|Acheter|Send WhatsApp)/
+      );
+      const end = stop ? stop.index! : Math.min(after.length, 3000);
+      text = after.slice(0, end).trim();
+    }
+
+    // Image
+    const imageMatch = block.match(/https:\/\/scontent[^\s)]+\.(jpg|jpeg|png|webp)/);
+    const imageUrl = imageMatch?.[0] || '';
+
+    rawAds.push({
+      libraryId,
+      advertiser,
+      text,
+      imageUrl,
+      destinationUrl,
+      cta,
+      startDate,
+      status,
+      country,
+      keyword,
+      scrapedAt: new Date().toISOString(),
+    });
+  }
+
+  // Filtrage e-commerce
+  const ads = rawAds.filter(looksLikeEcommerce);
+
+  fs.writeFileSync(
+    `debug/${keyword}-${country}-ads.json`,
+    JSON.stringify(ads, null, 2)
+  );
+  fs.writeFileSync(
+    `debug/${keyword}-${country}-raw.json`,
+    JSON.stringify(rawAds, null, 2)
+  );
+
+  console.log(
+    `✅ ${rawAds.length} annonces brutes → ${ads.length} e-commerce retenues`
+  );
+
+  ads.slice(0, 5).forEach((ad) => {
+    console.log(`\n--- ${ad.advertiser} (ID ${ad.libraryId}) ---`);
+    console.log(`📅 ${ad.startDate} | ${ad.status}`);
+    console.log(`🔗 ${ad.destinationUrl} | CTA: ${ad.cta}`);
+    console.log(`📝 ${ad.text.slice(0, 250).replace(/\n/g, ' ')}...`);
   });
-  fs.writeFileSync(
-    `debug/${keyword}-${country}-links.json`,
-    JSON.stringify(links, null, 2)
-  );
-  console.log(`🔗 ${links.length} liens Ad Library trouvés`);
-
-  // 3. Extraire TOUS les blocs de texte visibles (paragraphes, spans)
-  const textBlocks = await page.evaluate(() => {
-    const blocks: string[] = [];
-    const seen = new Set<string>();
-    document
-      .querySelectorAll('div, span, p')
-      .forEach((el) => {
-        const txt = (el as HTMLElement).innerText?.trim() || '';
-        if (txt.length > 30 && txt.length < 1000 && !seen.has(txt)) {
-          seen.add(txt);
-          blocks.push(txt);
-        }
-      });
-    return blocks;
-  });
-  fs.writeFileSync(
-    `debug/${keyword}-${country}-texts.json`,
-    JSON.stringify(textBlocks, null, 2)
-  );
-  console.log(`📝 ${textBlocks.length} blocs de texte extraits`);
-
-  // 4. Compter les images (souvent liées aux cartes d'annonces)
-  const imgCount = await page.evaluate(
-    () => document.querySelectorAll('img[src*="scontent"]').length
-  );
-  console.log(`🖼️ ${imgCount} images Facebook trouvées`);
 
   await browser.close();
+  return ads;
 }
 
 async function main() {
@@ -95,7 +159,7 @@ async function main() {
       try {
         await scrapeAds(keyword, country);
       } catch (e) {
-        console.error(`Erreur "${keyword}" (${country}):`, e);
+        console.error(`❌ Erreur "${keyword}" (${country}):`, e);
       }
     }
   }
