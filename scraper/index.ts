@@ -1,7 +1,8 @@
 import { chromium } from 'playwright';
+import fs from 'fs';
 
-const KEYWORDS = ['blender', 'montre', 'sac'];
-const COUNTRIES = ['CI', 'SN', 'CM'];
+const KEYWORDS = ['blender'];
+const COUNTRIES = ['CI'];
 
 async function scrapeAds(keyword: string, country: string) {
   const browser = await chromium.launch({ headless: true });
@@ -21,41 +22,34 @@ async function scrapeAds(keyword: string, country: string) {
     `&search_type=keyword_unordered&media_type=all`;
 
   console.log(`Recherche : "${keyword}" en ${country}`);
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
+  console.log(`URL : ${url}`);
 
-  try {
-    await page.click('button:has-text("Autoriser tous les cookies")', {
-      timeout: 3000,
-    });
-  } catch {}
+  await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
+  await page.waitForTimeout(8000);
 
-  for (let i = 0; i < 5; i++) {
-    await page.evaluate(() => window.scrollBy(0, 2000));
-    await page.waitForTimeout(2000 + Math.random() * 2000);
-  }
-
-  const ads = await page.evaluate(() => {
-    const cards = document.querySelectorAll('div[role="article"]');
-    const results: { rawText: string }[] = [];
-    cards.forEach((card) => {
-      const text = (card as HTMLElement).innerText;
-      if (text && text.length > 50) {
-        results.push({ rawText: text.slice(0, 500) });
-      }
-    });
-    return results;
+  fs.mkdirSync('debug', { recursive: true });
+  await page.screenshot({
+    path: `debug/${keyword}-${country}.png`,
+    fullPage: true,
   });
 
-  console.log(`${ads.length} annonces pour "${keyword}" (${country})`);
-  if (ads.length > 0) {
-    console.log('--- Apercu de la 1ere annonce ---');
-    console.log(ads[0].rawText);
-    console.log('----------------------------------');
-  }
+  const html = await page.content();
+  fs.writeFileSync(`debug/${keyword}-${country}.html`, html);
+
+  const title = await page.title();
+  console.log(`Titre de la page : "${title}"`);
+
+  const counts = await page.evaluate(() => {
+    return {
+      article: document.querySelectorAll('div[role="article"]').length,
+      anchor: document.querySelectorAll('a[href*="/ads/library"]').length,
+      img: document.querySelectorAll('img').length,
+      bodyText: document.body.innerText.slice(0, 300),
+    };
+  });
+  console.log('Diagnostic :', JSON.stringify(counts, null, 2));
 
   await browser.close();
-  return ads;
 }
 
 async function main() {
@@ -63,7 +57,6 @@ async function main() {
     for (const country of COUNTRIES) {
       try {
         await scrapeAds(keyword, country);
-        await new Promise((r) => setTimeout(r, 5000));
       } catch (e) {
         console.error(`Erreur "${keyword}" (${country}):`, e);
       }
