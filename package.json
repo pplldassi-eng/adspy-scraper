@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "scrape": "tsx scraper/index.ts",
-    "dev": "node -e \"require('http').createServer((req, res) => { res.writeHead(200, {'Content-Type': 'text/html; charset=utf-8'}); res.end('<h1>Scraper Meta Ads Activé</h1><p>Ce dépôt est un scraper pur. L’exécution se fait via <code>npm run scrape</code> ou GitHub Actions.</p>'); }).listen(3000)\""
+    "scrape": "tsx scraper/index.ts"
   },
   "dependencies": {
-    "playwright": "^1.48.0"
+    "playwright": "^1.48.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0"
   }
 }

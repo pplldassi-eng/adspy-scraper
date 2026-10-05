@@ -8,7 +8,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Recuperer le code
@@ -28,6 +28,7 @@ jobs:
       - name: Lancer le scraper
         run: npx tsx scraper/index.ts
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NODE_OPTIONS: '--max-old-space-size=2048'
 
       - name: Uploader les fichiers de debug

@@ -1,93 +1,85 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
+import { Pool } from 'pg';
 
-const KEYWORDS = ['blender'];
+const KEYWORDS = ['livraison gratuite', 'paiement à la livraison', 'blender'];
 const COUNTRIES = ['CI'];
 
-// ---- NOUVEAU : système de score ----
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
+
 function scoreEcommerce(ad: any): number {
-  const combined = (
-    ad.text + ' ' + ad.advertiser + ' ' + ad.destinationUrl
-  ).toLowerCase();
+  const combined = (ad.text + ' ' + ad.advertiser + ' ' + ad.destinationUrl).toLowerCase();
   let score = 0;
 
-  // Signaux positifs (e-commerce réel)
-  if (/\d[\d\s.,]*\s*(fcfa|cfa|\bf\b)/i.test(ad.text)) score += 4; // prix visible
-  if (/(whatsapp|api\.whatsapp)/i.test(combined)) score += 3;
-  if (/\b(livraison|livrer|commander|commandez|order|acheter|shop)\b/i.test(combined)) score += 2;
-  if (/\.(ci|sn|cm|bf|ml|tg|bj)\b/i.test(combined)) score += 4; // domaine local
-  if (/\b(promo|stock|offre|réduction|kdo|solde)\b/i.test(combined)) score += 1;
-  if (/\b(abidjan|dakar|douala|yaoundé|bamako|ouagadougou|lomé|cotonou)\b/i.test(combined)) score += 2;
+  const jours = ad.daysActive || 0;
+  if (jours >= 60) score += 20;
+  else if (jours >= 30) score += 12;
+  else if (jours >= 15) score += 6;
 
-  // Signaux négatifs (bruit)
-  if (/\b(meshy|vfx|after effects|cgi|render|animation|tutorial|course|formation|ebook)\b/i.test(combined)) score -= 12;
-  if (/\b(recipe|recette|vegan|dessert|gluten|cookie|ingredients)\b/i.test(combined)) score -= 10;
-  if (/\b(plugin|wordpress|license|logiciel|autocad|revit|bim)\b/i.test(combined)) score -= 12;
-  if (/\b(english|tutor|learn|sculpting|game asset|unity|unreal|godot)\b/i.test(combined)) score -= 10;
-  if (/\b(consultation|interior design|architecture|b2b|manufacturer|supplier|wholesale)\b/i.test(combined)) score -= 10;
+  if (/(whatsapp|api\.whatsapp)/i.test(combined)) score += 5;
+  if (/\b(livraison|paiement à la livraison|cod|cash on delivery)\b/i.test(combined)) score += 4;
+  if (/\d[\d\s.,]*\s*(fcfa|cfa|\bf\b)/i.test(ad.text)) score += 4;
+  if (/\.(ci|sn|cm|bf|ml|tg|bj)\b/i.test(combined)) score += 4;
+
+  if (/\b(meshy|vfx|after effects|cgi|render|animation|tutorial|course|ebook)\b/i.test(combined)) score -= 15;
+  if (/\b(recipe|recette|vegan|dessert|gluten|ingredients)\b/i.test(combined)) score -= 15;
+  if (/\b(plugin|wordpress|license|autocad|revit|bim)\b/i.test(combined)) score -= 15;
+  if (/\b(english|tutor|learn|sculpting|game asset)\b/i.test(combined)) score -= 15;
+  if (/\b(consultation|interior design|architecture|b2b|wholesaler)\b/i.test(combined)) score -= 15;
 
   return score;
 }
 
 function looksLikeEcommerce(ad: any): boolean {
-  return scoreEcommerce(ad) >= 4;
+  return scoreEcommerce(ad) >= 5;
 }
 
-// ---- NOUVEAU : extraction du prix ----
-function extractPrice(text: string): string {
+function extractPrice(text: string): number | null {
   const patterns = [
     /(\d[\d\s.,]*)\s*(?:FCFA|F CFA|CFA)/i,
-    /(?:FCFA|CFA)\s*(\d[\d\s.,]*)/i,
-    /(\d{1,3}(?:[.\s]\d{3})+)\s*F\b/i,     // 13.000f, 20 000 F
-    /(\d{4,6})\s*F\b/i,                    // 20000F
-    /Prix[^\d]{0,20}(\d[\d\s.,]*)/i,
-    /(?:kdo|promo)[^\d]{0,20}(\d[\d\s.,]*)/i,
+    /(\d{1,3}(?:[.\s]\d{3})+)\s*F\b/i,
+    /(\d{4,6})\s*F\b/i,
   ];
   for (const p of patterns) {
     const m = text.match(p);
     if (m && m[1]) {
-      const n = m[1].replace(/\s/g, '').replace(/[.,]/g, (c, i) => {
-        // garde le point comme séparateur de milliers si suivi de 3 chiffres
-        return c;
-      });
-      const cleaned = n.replace(/[^\d]/g, '');
-      if (cleaned.length >= 3 && cleaned.length <= 8) return cleaned;
+      const n = m[1].replace(/[^\d]/g, '');
+      if (n.length >= 3 && n.length <= 8) return parseInt(n);
     }
   }
-  return '';
+  return null;
 }
 
-// ---- Extraction d'un nom de produit (heuristique) ----
-function extractProductName(ad: any): string {
-  // Essaie de trouver un nom après le domaine destination (ligne du lien)
-  const lines = ad.text.split('\n').filter((l: string) => l.trim().length > 5);
-  if (lines.length === 0) return '';
-  // Souvent le produit est dans la 1ère ligne qui contient des mots techniques
-  const productLine = lines.find((l: string) =>
-    /(blender|mixeur|robot|bracelet|fond de teint|réfrigérateur|machine|pack|smart|technology|silvercrest|binatone)/i.test(l)
-  );
-  return (productLine || lines[0]).slice(0, 200).trim();
+function daysSince(dateStr: string): number {
+  if (!dateStr) return 0;
+  const mois: any = {
+    'janv': 0, 'févr': 1, 'mars': 2, 'avr': 3, 'mai': 4, 'juin': 5,
+    'juil': 6, 'août': 7, 'sept': 8, 'oct': 9, 'nov': 10, 'déc': 11
+  };
+  const m = dateStr.match(/(\d+)\s+([a-zéû]+)\s+(\d{4})/i);
+  if (!m) return 0;
+  const day = parseInt(m[1]);
+  const monthKey = Object.keys(mois).find(k => m[2].toLowerCase().startsWith(k.slice(0, 4)));
+  if (!monthKey) return 0;
+  const date = new Date(parseInt(m[3]), mois[monthKey], day);
+  return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-// ---- Scraper principal ----
 async function scrapeAds(keyword: string, country: string) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1366, height: 900 },
     locale: 'fr-FR',
   });
   const page = await context.newPage();
 
-  const url =
-    `https://www.facebook.com/ads/library/?active_status=active` +
-    `&ad_type=all&country=${country}` +
-    `&q=${encodeURIComponent(keyword)}` +
-    `&search_type=keyword_unordered&media_type=all`;
+  const url = `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&search_type=keyword_unordered&media_type=all`;
 
-  console.log(`🔍 Recherche : "${keyword}" en ${country}`);
+  console.log(`Recherche : "${keyword}" en ${country}`);
   await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
   await page.waitForTimeout(8000);
 
@@ -97,19 +89,11 @@ async function scrapeAds(keyword: string, country: string) {
   }
 
   fs.mkdirSync('debug', { recursive: true });
-  await page.screenshot({
-    path: `debug/${keyword}-${country}.png`,
-    fullPage: true,
-  });
-
   const pageText: string = await page.evaluate(() => document.body.innerText);
   fs.writeFileSync(`debug/${keyword}-${country}-fulltext.txt`, pageText);
 
-  const adBlocks = pageText.split(
-    /(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/
-  );
-
-  console.log(`📦 ${adBlocks.length} blocs bruts détectés`);
+  const adBlocks = pageText.split(/(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/);
+  console.log(`${adBlocks.length} blocs bruts detectes`);
 
   const rawAds: any[] = [];
 
@@ -117,55 +101,38 @@ async function scrapeAds(keyword: string, country: string) {
     const libraryId = block.match(/ID dans la bibliothèque\s*:\s*(\d+)/)?.[1];
     if (!libraryId) continue;
 
-    const startDateMatch = block.match(/Début de diffusion le\s*(.+?)(?:\n|$)/);
-    const startDate = startDateMatch?.[1]?.trim() || '';
-
-    const status = /^Actif/m.test(block.trim()) ? 'Actif' : 'Inactif';
-
-    const advertiserMatch = block.match(/\n([^\n]+?)\nSponsorisé/);
-    const advertiser = advertiserMatch?.[1]?.trim() || '';
-
-    const urlMatch = block.match(/\n([A-Z][A-Z0-9.\-]+\.[A-Z]{2,})\n/);
-    const destinationUrl = urlMatch?.[1]?.trim() || '';
-
-    const ctaMatch = block.match(
-      /\n(Commander|Learn More|S'inscrire|Shop Now|Send WhatsApp Message|Acheter|Download|Order Now|Envoyer un message WhatsApp)\n?/
-    );
-    const cta = ctaMatch?.[1] || '';
+    const startDate = block.match(/Début de diffusion le\s*(.+?)(?:\n|$)/)?.[1]?.trim() || '';
+    const advertiser = block.match(/\n([^\n]+?)\nSponsorisé/)?.[1]?.trim() || '';
+    const destinationUrl = block.match(/\n([A-Z][A-Z0-9.\-]+\.[A-Z]{2,})\n/)?.[1]?.trim() || '';
+    const cta = block.match(/\n(Commander|Learn More|S'inscrire|Shop Now|Send WhatsApp Message|Acheter|Download|Order Now|Envoyer un message WhatsApp)\n?/)?.[1] || '';
 
     let text = '';
     const sponsoIdx = block.indexOf('Sponsorisé');
     if (sponsoIdx >= 0) {
       const after = block.slice(sponsoIdx + 'Sponsorisé'.length);
-      const stop = after.match(
-        /\n(?=\d+:\d+\s*\/|\n[A-Z][A-Z0-9.\-]+\.[A-Z]{2,}\n|Commander|Learn More|Shop Now|S'inscrire|Acheter|Send WhatsApp)/
-      );
-      const end = stop ? stop.index! : Math.min(after.length, 3000);
-      text = after.slice(0, end).trim();
+      const stop = after.match(/\n(?=\d+:\d+\s*\/|\n[A-Z][A-Z0-9.\-]+\.[A-Z]{2,}\n|Commander|Learn More|Shop Now)/);
+      text = after.slice(0, stop ? stop.index! : Math.min(after.length, 3000)).trim();
     }
 
-    const imageMatch = block.match(/https:\/\/scontent[^\s)]+\.(jpg|jpeg|png|webp)/);
-    const imageUrl = imageMatch?.[0] || '';
+    const daysActive = daysSince(startDate);
+    const price = extractPrice(text);
 
     const ad = {
       libraryId,
       advertiser,
+      productName: text.split('\n')[0]?.slice(0, 200) || '',
       text,
-      imageUrl,
+      price,
       destinationUrl,
       cta,
       startDate,
-      status,
+      daysActive,
+      status: 'Actif',
       country,
       keyword,
-      scrapedAt: new Date().toISOString(),
     };
 
-    // Enrichissement
     (ad as any).score = scoreEcommerce(ad);
-    (ad as any).price = extractPrice(text);
-    (ad as any).productName = extractProductName(ad);
-
     rawAds.push(ad);
   }
 
@@ -180,16 +147,28 @@ async function scrapeAds(keyword: string, country: string) {
     JSON.stringify(rawAds, null, 2)
   );
 
-  console.log(
-    `✅ ${rawAds.length} annonces brutes → ${ads.length} e-commerce retenues`
-  );
+  console.log(`${rawAds.length} brutes -> ${ads.length} e-commerce retenues`);
 
-  ads.forEach((ad) => {
-    console.log(`\n--- ${ad.advertiser} (score ${(ad as any).score}) ---`);
-    console.log(`💰 Prix : ${(ad as any).price || '?'}`);
-    console.log(`📦 Produit : ${(ad as any).productName}`);
-    console.log(`🔗 ${ad.destinationUrl} | CTA: ${ad.cta}`);
-  });
+  for (const ad of ads) {
+    try {
+      await pool.query(
+        `INSERT INTO ads (library_id, advertiser, product_name, ad_text, price, destination_url, cta, start_date, days_active, status, country, keyword, score)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (library_id) DO UPDATE SET
+           days_active = EXCLUDED.days_active,
+           score = EXCLUDED.score,
+           scraped_at = NOW()`,
+        [
+          ad.libraryId, ad.advertiser, ad.productName, ad.text,
+          ad.price, ad.destinationUrl, ad.cta, ad.startDate,
+          ad.daysActive, ad.status, ad.country, ad.keyword, ad.score
+        ]
+      );
+      console.log(`Sauvegarde : ${ad.advertiser} (score ${ad.score}, ${ad.daysActive}j)`);
+    } catch (e) {
+      console.error(`Erreur insert ${ad.libraryId}:`, e);
+    }
+  }
 
   await browser.close();
   return ads;
@@ -201,10 +180,11 @@ async function main() {
       try {
         await scrapeAds(keyword, country);
       } catch (e) {
-        console.error(`❌ Erreur "${keyword}" (${country}):`, e);
+        console.error(`Erreur "${keyword}" (${country}):`, e);
       }
     }
   }
+  await pool.end();
 }
 
 main().catch(console.error);
