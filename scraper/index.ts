@@ -2,8 +2,8 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
 
-const KEYWORDS = ['livraison gratuite', 'paiement à la livraison', 'blender'];
-const COUNTRIES = ['CI'];
+const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
+const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -69,7 +69,10 @@ function daysSince(dateStr: string): number {
 }
 
 async function scrapeAds(keyword: string, country: string) {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    proxy: { server: 'http://localhost:8080' },
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     viewport: { width: 1366, height: 900 },
@@ -79,7 +82,7 @@ async function scrapeAds(keyword: string, country: string) {
 
   const url = `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&search_type=keyword_unordered&media_type=all`;
 
-  console.log(`Recherche : "${keyword}" en ${country}`);
+  console.log(`Recherche : "${keyword}" en ${country} via Flaregun proxy`);
   await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
   await page.waitForTimeout(8000);
 
@@ -175,14 +178,10 @@ async function scrapeAds(keyword: string, country: string) {
 }
 
 async function main() {
-  for (const keyword of KEYWORDS) {
-    for (const country of COUNTRIES) {
-      try {
-        await scrapeAds(keyword, country);
-      } catch (e) {
-        console.error(`Erreur "${keyword}" (${country}):`, e);
-      }
-    }
+  try {
+    await scrapeAds(KEYWORD, COUNTRY);
+  } catch (e) {
+    console.error(`Erreur "${KEYWORD}" (${COUNTRY}):`, e);
   }
   await pool.end();
 }

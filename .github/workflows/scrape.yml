@@ -2,8 +2,28 @@ name: Scraper Meta Ads
 
 on:
   workflow_dispatch:
+    inputs:
+      keyword:
+        description: 'Mot-clé (ex: blender)'
+        required: false
+        default: 'livraison gratuite'
+      country:
+        description: 'Pays (CI, SN, CM)'
+        required: false
+        default: 'CI'
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 1 * * *'
+    - cron: '0 3 * * *'
+    - cron: '0 5 * * *'
+    - cron: '0 7 * * *'
+    - cron: '0 9 * * *'
+    - cron: '0 11 * * *'
+    - cron: '0 13 * * *'
+    - cron: '0 15 * * *'
+    - cron: '0 17 * * *'
+    - cron: '0 19 * * *'
+    - cron: '0 21 * * *'
+    - cron: '0 23 * * *'
 
 jobs:
   scrape:
@@ -25,11 +45,75 @@ jobs:
       - name: Installer Chromium Playwright
         run: npx playwright install chromium
 
+      - name: Installer Flaregun
+        run: npm install -g @miclivs/flaregun
+
+      - name: Demarrer Flaregun proxy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          flaregun init --token $CLOUDFLARE_API_TOKEN --account $CLOUDFLARE_ACCOUNT_ID
+          flaregun up 10
+          flaregun serve --port 8080 &
+          sleep 5
+
+      - name: Determiner mot-cle et pays selon l'heure
+        id: config
+        run: |
+          HOUR=$(date -u +%H)
+          if [ "$HOUR" = "01" ]; then
+            echo "keyword=livraison gratuite" >> $GITHUB_OUTPUT
+            echo "country=CI" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "03" ]; then
+            echo "keyword=paiement à la livraison" >> $GITHUB_OUTPUT
+            echo "country=CI" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "05" ]; then
+            echo "keyword=livraison 24h" >> $GITHUB_OUTPUT
+            echo "country=SN" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "07" ]; then
+            echo "keyword=blender" >> $GITHUB_OUTPUT
+            echo "country=CI" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "09" ]; then
+            echo "keyword=montre homme" >> $GITHUB_OUTPUT
+            echo "country=CM" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "11" ]; then
+            echo "keyword=sac femme" >> $GITHUB_OUTPUT
+            echo "country=SN" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "13" ]; then
+            echo "keyword=cuiseur riz" >> $GITHUB_OUTPUT
+            echo "country=CI" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "15" ]; then
+            echo "keyword=aspirateur voiture" >> $GITHUB_OUTPUT
+            echo "country=CM" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "17" ]; then
+            echo "keyword=écouteurs bluetooth" >> $GITHUB_OUTPUT
+            echo "country=SN" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "19" ]; then
+            echo "keyword=parfum femme" >> $GITHUB_OUTPUT
+            echo "country=CI" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "21" ]; then
+            echo "keyword=chaussures homme" >> $GITHUB_OUTPUT
+            echo "country=CM" >> $GITHUB_OUTPUT
+          elif [ "$HOUR" = "23" ]; then
+            echo "keyword=bijoux femme" >> $GITHUB_OUTPUT
+            echo "country=SN" >> $GITHUB_OUTPUT
+          else
+            echo "keyword=${{ github.event.inputs.keyword || 'livraison gratuite' }}" >> $GITHUB_OUTPUT
+            echo "country=${{ github.event.inputs.country || 'CI' }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Lancer le scraper
         run: npx tsx scraper/index.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SCRAPE_KEYWORD: ${{ steps.config.outputs.keyword }}
+          SCRAPE_COUNTRY: ${{ steps.config.outputs.country }}
           NODE_OPTIONS: '--max-old-space-size=2048'
+
+      - name: Arreter Flaregun
+        if: always()
+        run: flaregun down || true
 
       - name: Uploader les fichiers de debug
         if: always()
