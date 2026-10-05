@@ -2,8 +2,18 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
 
-const KEYWORDS = ['livraison gratuite', 'paiement à la livraison', 'blender'];
-const COUNTRIES = ['CI'];
+const KEYWORDS = [
+  'livraison gratuite',
+  'paiement à la livraison',
+  'blender',
+  'montre',
+  'sac',
+  'cuiseur',
+  'aspirateur',
+  'écouteurs'
+];
+
+const COUNTRIES = ['CI', 'SN', 'CM'];
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -175,10 +185,14 @@ async function scrapeAds(keyword: string, country: string) {
 }
 
 async function main() {
+  let count = 0;
   for (const keyword of KEYWORDS) {
     for (const country of COUNTRIES) {
       try {
         await scrapeAds(keyword, country);
+        count++;
+        console.log(`--- ${count} recherche(s) terminee(s) ---`);
+        await new Promise((r) => setTimeout(r, 15000));
       } catch (e) {
         console.error(`Erreur "${keyword}" (${country}):`, e);
       }
