@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       keyword:
-        description: 'Mot-clé (ex: blender)'
+        description: 'Mot-clé COD'
         required: false
         default: 'livraison gratuite'
       country:
@@ -12,18 +12,24 @@ on:
         required: false
         default: 'CI'
   schedule:
+    - cron: '0 0 * * *'
     - cron: '0 1 * * *'
+    - cron: '0 2 * * *'
     - cron: '0 3 * * *'
+    - cron: '0 4 * * *'
     - cron: '0 5 * * *'
+    - cron: '0 6 * * *'
     - cron: '0 7 * * *'
+    - cron: '0 8 * * *'
     - cron: '0 9 * * *'
+    - cron: '0 10 * * *'
     - cron: '0 11 * * *'
+    - cron: '0 12 * * *'
     - cron: '0 13 * * *'
+    - cron: '0 14 * * *'
     - cron: '0 15 * * *'
+    - cron: '0 16 * * *'
     - cron: '0 17 * * *'
-    - cron: '0 19 * * *'
-    - cron: '0 21 * * *'
-    - cron: '0 23 * * *'
 
 jobs:
   scrape:
@@ -52,46 +58,27 @@ jobs:
         id: config
         run: |
           HOUR=$(date -u +%H)
-          if [ "$HOUR" = "01" ]; then
-            echo "keyword=livraison gratuite" >> $GITHUB_OUTPUT
-            echo "country=CI" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "03" ]; then
-            echo "keyword=paiement à la livraison" >> $GITHUB_OUTPUT
-            echo "country=CI" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "05" ]; then
-            echo "keyword=livraison 24h" >> $GITHUB_OUTPUT
-            echo "country=SN" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "07" ]; then
-            echo "keyword=blender" >> $GITHUB_OUTPUT
-            echo "country=CI" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "09" ]; then
-            echo "keyword=montre homme" >> $GITHUB_OUTPUT
-            echo "country=CM" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "11" ]; then
-            echo "keyword=sac femme" >> $GITHUB_OUTPUT
-            echo "country=SN" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "13" ]; then
-            echo "keyword=cuiseur riz" >> $GITHUB_OUTPUT
-            echo "country=CI" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "15" ]; then
-            echo "keyword=aspirateur voiture" >> $GITHUB_OUTPUT
-            echo "country=CM" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "17" ]; then
-            echo "keyword=écouteurs bluetooth" >> $GITHUB_OUTPUT
-            echo "country=SN" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "19" ]; then
-            echo "keyword=parfum femme" >> $GITHUB_OUTPUT
-            echo "country=CI" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "21" ]; then
-            echo "keyword=chaussures homme" >> $GITHUB_OUTPUT
-            echo "country=CM" >> $GITHUB_OUTPUT
-          elif [ "$HOUR" = "23" ]; then
-            echo "keyword=bijoux femme" >> $GITHUB_OUTPUT
-            echo "country=SN" >> $GITHUB_OUTPUT
-          else
-            echo "keyword=${{ github.event.inputs.keyword || 'livraison gratuite' }}" >> $GITHUB_OUTPUT
-            echo "country=${{ github.event.inputs.country || 'CI' }}" >> $GITHUB_OUTPUT
-          fi
+          case "$HOUR" in
+            00) echo "keyword=livraison gratuite" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            01) echo "keyword=livraison gratuite" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            02) echo "keyword=livraison gratuite" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            03) echo "keyword=paiement à la livraison" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            04) echo "keyword=paiement à la livraison" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            05) echo "keyword=paiement à la livraison" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            06) echo "keyword=payez à la réception" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            07) echo "keyword=payez à la réception" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            08) echo "keyword=payez à la réception" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            09) echo "keyword=cash à la livraison" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            10) echo "keyword=cash à la livraison" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            11) echo "keyword=cash à la livraison" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            12) echo "keyword=livraison partout" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            13) echo "keyword=livraison partout" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            14) echo "keyword=livraison partout" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            15) echo "keyword=commander sur whatsapp" >> $GITHUB_OUTPUT; echo "country=CI" >> $GITHUB_OUTPUT ;;
+            16) echo "keyword=commander sur whatsapp" >> $GITHUB_OUTPUT; echo "country=SN" >> $GITHUB_OUTPUT ;;
+            17) echo "keyword=commander sur whatsapp" >> $GITHUB_OUTPUT; echo "country=CM" >> $GITHUB_OUTPUT ;;
+            *) echo "keyword=${{ github.event.inputs.keyword || 'livraison gratuite' }}" >> $GITHUB_OUTPUT; echo "country=${{ github.event.inputs.country || 'CI' }}" >> $GITHUB_OUTPUT ;;
+          esac
 
       - name: Lancer Flaregun et le scraper dans la MEME etape
         env:
@@ -102,24 +89,13 @@ jobs:
           SCRAPE_COUNTRY: ${{ steps.config.outputs.country }}
           NODE_OPTIONS: '--max-old-space-size=2048'
         run: |
-          echo "=== Initialisation Flaregun ==="
           flaregun init --token "$CLOUDFLARE_API_TOKEN" --account "$CLOUDFLARE_ACCOUNT_ID"
           flaregun up 10
-          
-          echo "=== Demarrage du proxy en arriere-plan ==="
           flaregun serve --port 8080 &
           FLAREGUN_PID=$!
-          
-          echo "=== Attente du proxy (10 secondes) ==="
           sleep 10
-          
-          echo "=== Test du proxy avec curl ==="
           curl --max-time 15 --proxy http://localhost:8080 https://httpbin.org/ip || echo "Curl a echoue"
-          
-          echo "=== Lancement du scraper ==="
           npx tsx scraper/index.ts || echo "Scraper a echoue"
-          
-          echo "=== Arret de Flaregun ==="
           kill $FLAREGUN_PID 2>/dev/null || true
           flaregun down || true
 
