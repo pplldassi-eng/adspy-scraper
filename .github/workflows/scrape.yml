@@ -48,16 +48,6 @@ jobs:
       - name: Installer Flaregun
         run: npm install -g @miclivs/flaregun
 
-      - name: Demarrer Flaregun proxy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          flaregun init --token $CLOUDFLARE_API_TOKEN --account $CLOUDFLARE_ACCOUNT_ID
-          flaregun up 10
-          flaregun serve --port 8080 &
-          sleep 5
-
       - name: Determiner mot-cle et pays selon l'heure
         id: config
         run: |
@@ -103,17 +93,35 @@ jobs:
             echo "country=${{ github.event.inputs.country || 'CI' }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Lancer le scraper
-        run: npx tsx scraper/index.ts
+      - name: Lancer Flaregun et le scraper dans la MEME etape
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SCRAPE_KEYWORD: ${{ steps.config.outputs.keyword }}
           SCRAPE_COUNTRY: ${{ steps.config.outputs.country }}
           NODE_OPTIONS: '--max-old-space-size=2048'
-
-      - name: Arreter Flaregun
-        if: always()
-        run: flaregun down || true
+        run: |
+          echo "=== Initialisation Flaregun ==="
+          flaregun init --token "$CLOUDFLARE_API_TOKEN" --account "$CLOUDFLARE_ACCOUNT_ID"
+          flaregun up 10
+          
+          echo "=== Demarrage du proxy en arriere-plan ==="
+          flaregun serve --port 8080 &
+          FLAREGUN_PID=$!
+          
+          echo "=== Attente du proxy (10 secondes) ==="
+          sleep 10
+          
+          echo "=== Test du proxy avec curl ==="
+          curl --max-time 15 --proxy http://localhost:8080 https://httpbin.org/ip || echo "Curl a echoue"
+          
+          echo "=== Lancement du scraper ==="
+          npx tsx scraper/index.ts || echo "Scraper a echoue"
+          
+          echo "=== Arret de Flaregun ==="
+          kill $FLAREGUN_PID 2>/dev/null || true
+          flaregun down || true
 
       - name: Uploader les fichiers de debug
         if: always()
