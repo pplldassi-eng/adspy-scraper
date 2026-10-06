@@ -117,13 +117,18 @@ async function scrapeAds(keyword: string, country: string) {
       text = after.slice(0, stop ? stop.index! : Math.min(after.length, 3000)).trim();
     }
 
-    // Extraction de l'image
-    const imageMatch = block.match(/https:\/\/scontent[^\s")]+\.(jpg|jpeg|png|webp)/i);
-    const imageUrl = imageMatch ? imageMatch[0] : null;
+    // Extraction de l'image (gère les URLs échappées par Facebook)
+    const imageMatch = block.match(/https:\\?\/\\?\/scontent[^\s"')]+\.(jpg|jpeg|png|webp)/i)
+                    || block.match(/scontent[^\s"')]+\.(jpg|jpeg|png|webp)/i);
+    let imageUrl = imageMatch ? imageMatch[0].replace(/\\\//g, '/') : null;
+    
+    // Extraction de la vidéo (gère les URLs échappées par Facebook)
+    const videoMatch = block.match(/https:\\?\/\\?\/video[^\s"')]+\.mp4/i)
+                    || block.match(/video[^\s"')]+\.mp4/i);
+    let videoUrl = videoMatch ? videoMatch[0].replace(/\\\//g, '/') : null;
 
-    // Extraction de la vidéo
-    const videoMatch = block.match(/https:\/\/video[^\s")]+\.mp4/i);
-    const videoUrl = videoMatch ? videoMatch[0] : null;
+    if (imageUrl) console.log(`  🖼️ Image trouvée pour ${advertiser || 'inconnu'}`);
+    if (videoUrl) console.log(`  🎥 Vidéo trouvée pour ${advertiser || 'inconnu'}`);
 
     const daysActive = daysSince(startDate);
     const price = extractPrice(text);
