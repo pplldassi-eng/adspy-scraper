@@ -2,6 +2,8 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
 import crypto from 'crypto';
+import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -83,20 +85,24 @@ async function uploadToCloudinary(
   }
   
   try {
-    // 1. Télécharger le fichier depuis Facebook
-    const fileRes = await fetch(fileUrl, {
+    // 1. Télécharger le fichier via le proxy Flaregun
+    const agent = new HttpsProxyAgent('http://localhost:8080');
+    
+    const response = await axios.get(fileUrl, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      httpAgent: agent,
+      httpsAgent: agent,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Referer': 'https://www.facebook.com/',
+        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
       },
+      maxRedirects: 5,
+      validateStatus: (status) => status < 400,
     });
     
-    if (!fileRes.ok) {
-      console.log(`  ❌ Download ${resourceType} échoué: ${fileRes.status}`);
-      return null;
-    }
-    
-    const buffer = await fileRes.arrayBuffer();
+    const buffer = Buffer.from(response.data);
     
     // 2. Upload vers Cloudinary (signature)
     const timestamp = Math.floor(Date.now() / 1000);
