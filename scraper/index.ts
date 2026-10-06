@@ -95,6 +95,43 @@ async function scrapeAds(keyword: string, country: string) {
   const pageText: string = await page.evaluate(() => document.body.innerText);
   fs.writeFileSync(`debug/${keyword}-${country}-fulltext.txt`, pageText);
 
+  // Extraire les médias directement depuis le DOM
+  const mediaList = await page.evaluate(() => {
+    // Collecter toutes les images et vidéos de la page
+    const allMedia: { imageUrl: string | null; videoUrl: string | null; position: number }[] = [];
+    
+    // Chercher les éléments qui contiennent du contenu publicitaire
+    const containers = document.querySelectorAll('div[role="article"], div[data-pagelet]');
+    
+    containers.forEach((container, idx) => {
+      const imgEl = container.querySelector('img[src*="scontent"], img[src*="fbcdn"]');
+      const videoEl = container.querySelector('video');
+      
+      let imageUrl: string | null = null;
+      let videoUrl: string | null = null;
+      
+      if (imgEl) {
+        const src = (imgEl as HTMLImageElement).src;
+        if (src && !src.includes('emoji') && !src.includes('static.xx.fbcdn')) {
+          imageUrl = src;
+        }
+      }
+      
+      if (videoEl) {
+        const v = videoEl as HTMLVideoElement;
+        videoUrl = v.src || v.querySelector('source')?.src || null;
+      }
+      
+      if (imageUrl || videoUrl) {
+        allMedia.push({ imageUrl, videoUrl, position: idx });
+      }
+    });
+    
+    return allMedia;
+  });
+  
+  console.log(`📸 ${mediaList.length} médias extraits du DOM`);
+
   const adBlocks = pageText.split(/(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/);
   console.log(`${adBlocks.length} blocs bruts detectes`);
 
@@ -117,15 +154,15 @@ async function scrapeAds(keyword: string, country: string) {
       text = after.slice(0, stop ? stop.index! : Math.min(after.length, 3000)).trim();
     }
 
-    // Extraction de l'image (gère les URLs échappées par Facebook)
-    const imageMatch = block.match(/https:\\?\/\\?\/scontent[^\s"')]+\.(jpg|jpeg|png|webp)/i)
-                    || block.match(/scontent[^\s"')]+\.(jpg|jpeg|png|webp)/i);
-    let imageUrl = imageMatch ? imageMatch[0].replace(/\\\//g, '/') : null;
+    let imageUrl: string | null = null;
+    let videoUrl: string | null = null;
     
-    // Extraction de la vidéo (gère les URLs échappées par Facebook)
-    const videoMatch = block.match(/https:\\?\/\\?\/video[^\s"')]+\.mp4/i)
-                    || block.match(/video[^\s"')]+\.mp4/i);
-    let videoUrl = videoMatch ? videoMatch[0].replace(/\\\//g, '/') : null;
+    // On associe par index (en sautant le premier bloc qui est l'entête)
+    const mediaIndex = rawAds.length;  // index courant
+    if (mediaList[mediaIndex]) {
+      imageUrl = mediaList[mediaIndex].imageUrl;
+      videoUrl = mediaList[mediaIndex].videoUrl;
+    }
 
     if (imageUrl) console.log(`  🖼️ Image trouvée pour ${advertiser || 'inconnu'}`);
     if (videoUrl) console.log(`  🎥 Vidéo trouvée pour ${advertiser || 'inconnu'}`);
