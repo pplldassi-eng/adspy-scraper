@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
+import crypto from 'crypto';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -66,6 +67,73 @@ function daysSince(dateStr: string): number {
   if (!monthKey) return 0;
   const date = new Date(parseInt(m[3]), mois[monthKey], day);
   return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+async function uploadToCloudinary(
+  fileUrl: string,
+  resourceType: 'image' | 'video'
+): Promise<string | null> {
+  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const apiKey = process.env.CLOUDINARY_API_KEY;
+  const apiSecret = process.env.CLOUDINARY_API_SECRET;
+  
+  if (!cloudName || !apiKey || !apiSecret) {
+    console.log('⚠️ Cloudinary secrets manquants');
+    return null;
+  }
+  
+  try {
+    // 1. Télécharger le fichier depuis Facebook
+    const fileRes = await fetch(fileUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://www.facebook.com/',
+      },
+    });
+    
+    if (!fileRes.ok) {
+      console.log(`  ❌ Download ${resourceType} échoué: ${fileRes.status}`);
+      return null;
+    }
+    
+    const buffer = await fileRes.arrayBuffer();
+    
+    // 2. Upload vers Cloudinary (signature)
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = 'adspy-africa';
+    const paramsToSign = `folder=${folder}&timestamp=${timestamp}`;
+    const signature = crypto
+      .createHash('sha1')
+      .update(paramsToSign + apiSecret)
+      .digest('hex');
+    
+    // 3. Construire le FormData
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer]), 'media');
+    formData.append('api_key', apiKey);
+    formData.append('timestamp', String(timestamp));
+    formData.append('folder', folder);
+    formData.append('signature', signature);
+    
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
+    
+    const uploadRes = await fetch(uploadUrl, {
+      method: 'POST',
+      body: formData,
+    });
+    
+    if (!uploadRes.ok) {
+      const err = await uploadRes.text();
+      console.log(`  ❌ Upload Cloudinary échoué: ${uploadRes.status} ${err.slice(0, 200)}`);
+      return null;
+    }
+    
+    const data: any = await uploadRes.json();
+    return data.secure_url || null;
+  } catch (e: any) {
+    console.log(`  ❌ Erreur Cloudinary: ${e.message}`);
+    return null;
+  }
 }
 
 async function scrapeAds(keyword: string, country: string) {
@@ -187,6 +255,24 @@ async function scrapeAds(keyword: string, country: string) {
 
   for (const ad of ads) {
     try {
+      // Upload image vers Cloudinary
+      let cloudinaryImageUrl: string | null = null;
+      if (ad.imageUrl) {
+        cloudinaryImageUrl = await uploadToCloudinary(ad.imageUrl, 'image');
+        if (cloudinaryImageUrl) {
+          console.log(`  ☁️ Image uploadée pour ${ad.advertiser}`);
+        }
+      }
+      
+      // Upload vidéo vers Cloudinary
+      let cloudinaryVideoUrl: string | null = null;
+      if (ad.videoUrl) {
+        cloudinaryVideoUrl = await uploadToCloudinary(ad.videoUrl, 'video');
+        if (cloudinaryVideoUrl) {
+          console.log(`  ☁️ Vidéo uploadée pour ${ad.advertiser}`);
+        }
+      }
+
       await pool.query(
         `INSERT INTO ads (
           library_id, advertiser, product_name, ad_text, price, 
@@ -206,7 +292,7 @@ async function scrapeAds(keyword: string, country: string) {
           ad.libraryId, ad.advertiser, ad.productName, ad.text,
           ad.price, ad.destinationUrl, ad.cta, ad.startDate,
           ad.daysActive, ad.status, ad.country, ad.keyword, 
-          ad.score, ad.imageUrl, ad.videoUrl
+          ad.score, cloudinaryImageUrl, cloudinaryVideoUrl
         ]
       );
       console.log(`Sauvegarde : ${ad.advertiser} (score ${ad.score}, ${ad.daysActive}j)`);
