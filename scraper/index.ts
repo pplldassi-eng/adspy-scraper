@@ -95,42 +95,28 @@ async function scrapeAds(keyword: string, country: string) {
   const pageText: string = await page.evaluate(() => document.body.innerText);
   fs.writeFileSync(`debug/${keyword}-${country}-fulltext.txt`, pageText);
 
-  // Extraire les médias directement depuis le DOM
-  const mediaList = await page.evaluate(() => {
-    // Collecter toutes les images et vidéos de la page
-    const allMedia: { imageUrl: string | null; videoUrl: string | null; position: number }[] = [];
-    
-    // Chercher les éléments qui contiennent du contenu publicitaire
-    const containers = document.querySelectorAll('div[role="article"], div[data-pagelet]');
-    
-    containers.forEach((container, idx) => {
-      const imgEl = container.querySelector('img[src*="scontent"], img[src*="fbcdn"]');
-      const videoEl = container.querySelector('video');
-      
-      let imageUrl: string | null = null;
-      let videoUrl: string | null = null;
-      
-      if (imgEl) {
-        const src = (imgEl as HTMLImageElement).src;
-        if (src && !src.includes('emoji') && !src.includes('static.xx.fbcdn')) {
-          imageUrl = src;
-        }
-      }
-      
-      if (videoEl) {
-        const v = videoEl as HTMLVideoElement;
-        videoUrl = v.src || v.querySelector('source')?.src || null;
-      }
-      
-      if (imageUrl || videoUrl) {
-        allMedia.push({ imageUrl, videoUrl, position: idx });
-      }
-    });
-    
-    return allMedia;
-  });
+  // Récupérer le HTML complet de la page (contient les attributs src)
+  const pageHtml: string = await page.content();
+  fs.writeFileSync(`debug/${keyword}-${country}-page.html`, pageHtml);
   
-  console.log(`📸 ${mediaList.length} médias extraits du DOM`);
+  // Extraire TOUTES les URLs d'images scontent depuis le HTML
+  const allImages = pageHtml.match(/https:\\?\/\\?\/scontent[^"'\s\\]+\.(?:jpg|jpeg|png|webp)/gi) || [];
+  const cleanImages = allImages.map(u => u.replace(/\\\//g, '/'));
+  
+  // Extraire TOUTES les URLs de vidéos depuis le HTML
+  const allVideos = pageHtml.match(/https:\\?\/\\?\/video[^"'\s\\]+\.mp4/gi) || [];
+  const cleanVideos = allVideos.map(u => u.replace(/\\\//g, '/'));
+  
+  // Dédoublonner
+  const uniqueImages = [...new Set(cleanImages)];
+  const uniqueVideos = [...new Set(cleanVideos)];
+  
+  console.log(`📸 ${uniqueImages.length} images trouvées dans le HTML`);
+  console.log(`🎥 ${uniqueVideos.length} vidéos trouvées dans le HTML`);
+  
+  if (uniqueImages.length > 0) {
+    console.log(`   Exemple: ${uniqueImages[0].slice(0, 100)}`);
+  }
 
   const adBlocks = pageText.split(/(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/);
   console.log(`${adBlocks.length} blocs bruts detectes`);
@@ -154,15 +140,10 @@ async function scrapeAds(keyword: string, country: string) {
       text = after.slice(0, stop ? stop.index! : Math.min(after.length, 3000)).trim();
     }
 
-    let imageUrl: string | null = null;
-    let videoUrl: string | null = null;
-    
-    // On associe par index (en sautant le premier bloc qui est l'entête)
-    const mediaIndex = rawAds.length;  // index courant
-    if (mediaList[mediaIndex]) {
-      imageUrl = mediaList[mediaIndex].imageUrl;
-      videoUrl = mediaList[mediaIndex].videoUrl;
-    }
+    // Associer par index (chaque bloc = 1 annonce)
+    const mediaIndex = rawAds.length;
+    const imageUrl = uniqueImages[mediaIndex] || null;
+    const videoUrl = uniqueVideos[mediaIndex] || null;
 
     if (imageUrl) console.log(`  🖼️ Image trouvée pour ${advertiser || 'inconnu'}`);
     if (videoUrl) console.log(`  🎥 Vidéo trouvée pour ${advertiser || 'inconnu'}`);
