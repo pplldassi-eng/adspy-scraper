@@ -117,6 +117,14 @@ async function scrapeAds(keyword: string, country: string) {
       text = after.slice(0, stop ? stop.index! : Math.min(after.length, 3000)).trim();
     }
 
+    // Extraction de l'image
+    const imageMatch = block.match(/https:\/\/scontent[^\s")]+\.(jpg|jpeg|png|webp)/i);
+    const imageUrl = imageMatch ? imageMatch[0] : null;
+
+    // Extraction de la vidéo
+    const videoMatch = block.match(/https:\/\/video[^\s")]+\.mp4/i);
+    const videoUrl = videoMatch ? videoMatch[0] : null;
+
     const daysActive = daysSince(startDate);
     const price = extractPrice(text);
 
@@ -133,6 +141,8 @@ async function scrapeAds(keyword: string, country: string) {
       status: 'Actif',
       country,
       keyword,
+      imageUrl,
+      videoUrl,
     };
 
     (ad as any).score = scoreEcommerce(ad);
@@ -155,16 +165,25 @@ async function scrapeAds(keyword: string, country: string) {
   for (const ad of ads) {
     try {
       await pool.query(
-        `INSERT INTO ads (library_id, advertiser, product_name, ad_text, price, destination_url, cta, start_date, days_active, status, country, keyword, score)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-         ON CONFLICT (library_id) DO UPDATE SET
-           days_active = EXCLUDED.days_active,
-           score = EXCLUDED.score,
-           scraped_at = NOW()`,
+        `INSERT INTO ads (
+          library_id, advertiser, product_name, ad_text, price, 
+          destination_url, cta, start_date, days_active, status, 
+          country, keyword, score, image_url, video_url
+        )
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+        )
+        ON CONFLICT (library_id) DO UPDATE SET
+          days_active = EXCLUDED.days_active,
+          score = EXCLUDED.score,
+          image_url = EXCLUDED.image_url,
+          video_url = EXCLUDED.video_url,
+          scraped_at = NOW()`,
         [
           ad.libraryId, ad.advertiser, ad.productName, ad.text,
           ad.price, ad.destinationUrl, ad.cta, ad.startDate,
-          ad.daysActive, ad.status, ad.country, ad.keyword, ad.score
+          ad.daysActive, ad.status, ad.country, ad.keyword, 
+          ad.score, ad.imageUrl, ad.videoUrl
         ]
       );
       console.log(`Sauvegarde : ${ad.advertiser} (score ${ad.score}, ${ad.daysActive}j)`);
