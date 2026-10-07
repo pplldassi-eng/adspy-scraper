@@ -77,16 +77,17 @@ async function uploadToCloudinary(
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+  const preset = 'adspy_preset';
   
   if (!cloudName) {
-    console.log('⚠️ Cloudinary cloud name manquant');
+    console.log('⚠️ CLOUDINARY_CLOUD_NAME manquant');
     return null;
   }
-
-  cloudinary.config({
-    cloud_name: cloudName,
-    secure: true,
-  });
+  
+  console.log(`\n🔍 [DEBUG] Début upload ${resourceType}`);
+  console.log(`   Cloud name  : "${cloudName}"`);
+  console.log(`   Preset      : "${preset}"`);
+  console.log(`   File URL    : ${fileUrl.slice(0, 80)}...`);
   
   try {
     // 1. Télécharger le fichier via le proxy Flaregun
@@ -107,29 +108,71 @@ async function uploadToCloudinary(
     });
     
     const buffer = Buffer.from(response.data);
+    const sizeKB = Math.round(buffer.length / 1024);
+    console.log(`   ✅ Download OK : ${sizeKB} KB`);
     
-    // 2. Upload vers Cloudinary via SDK officiel
-    const result = await new Promise<any>((resolve, reject) => {
-      const stream = cloudinary.uploader.upload_stream(
-        {
-          upload_preset: 'adspy_preset',
-          folder: 'adspy-africa',
-          resource_type: resourceType,
-        },
-        (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
-        }
-      );
-      stream.end(buffer);
+    if (buffer.length === 0) {
+      console.log(`   ❌ Buffer vide, abandon`);
+      return null;
+    }
+    
+    // 2. Upload vers Cloudinary via base64
+    const base64 = buffer.toString('base64');
+    const mimeType = resourceType === 'image' ? 'image/jpeg' : 'video/mp4';
+    const dataUri = `data:${mimeType};base64,${base64}`;
+    
+    const formData = new URLSearchParams();
+    formData.append('file', dataUri);
+    formData.append('upload_preset', preset);
+    formData.append('folder', 'adspy-africa');
+    
+    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
+    console.log(`   📤 POST ${uploadUrl}`);
+    console.log(`   📦 Body size : ~${Math.round(formData.toString().length / 1024)} KB`);
+    
+    const uploadRes = await axios.post(uploadUrl, formData.toString(), {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 120000,
+      validateStatus: () => true,
     });
     
-    return result.secure_url || null;
+    console.log(`   📥 Status : ${uploadRes.status}`);
+    
+    if (uploadRes.status >= 400) {
+      let errorMsg = 'Unknown error';
+      if (uploadRes.data) {
+        if (typeof uploadRes.data === 'string') {
+          errorMsg = uploadRes.data.slice(0, 500);
+        } else if (uploadRes.data.error) {
+          errorMsg = JSON.stringify(uploadRes.data.error).slice(0, 500);
+        } else {
+          errorMsg = JSON.stringify(uploadRes.data).slice(0, 500);
+        }
+      }
+      console.log(`   ❌ Cloudinary HTTP ${uploadRes.status} : ${errorMsg}`);
+      return null;
+    }
+    
+    const secureUrl = uploadRes.data?.secure_url;
+    if (!secureUrl) {
+      console.log(`   ❌ Pas de secure_url dans la réponse`);
+      console.log(`   Réponse : ${JSON.stringify(uploadRes.data).slice(0, 500)}`);
+      return null;
+    }
+    
+    console.log(`   ✅ Upload OK : ${secureUrl.slice(0, 80)}...`);
+    return secureUrl;
+    
   } catch (e: any) {
-    const detail = e.response?.data 
-      ? JSON.stringify(e.response.data).slice(0, 300) 
-      : e.message;
-    console.log(`  ❌ Erreur Cloudinary: ${detail}`);
+    console.log(`   ❌ Exception : ${e.message}`);
+    if (e.response) {
+      console.log(`   Status  : ${e.response.status}`);
+      console.log(`   Data    : ${JSON.stringify(e.response.data).slice(0, 500)}`);
+    }
     return null;
   }
 }
