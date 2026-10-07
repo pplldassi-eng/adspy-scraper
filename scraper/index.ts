@@ -71,7 +71,7 @@ function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-async function uploadToCloudinary(
+async function uploadToCatbox(
   fileUrl: string,
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
@@ -261,21 +261,20 @@ async function scrapeAds(keyword: string, country: string) {
 
   for (const ad of ads) {
     try {
-      // Upload image vers Cloudinary
-      let cloudinaryImageUrl: string | null = null;
+      // Upload vers Catbox.moe
+      let finalImageUrl: string | null = null;
       if (ad.imageUrl) {
-        cloudinaryImageUrl = await uploadToCloudinary(ad.imageUrl, 'image');
-        if (cloudinaryImageUrl) {
-          console.log(`  ☁️ Image uploadée pour ${ad.advertiser}`);
+        finalImageUrl = await uploadToCatbox(ad.imageUrl, 'image');
+        if (finalImageUrl) {
+          console.log(`  📦 Image uploadée vers Catbox pour ${ad.advertiser}`);
         }
       }
       
-      // Upload vidéo vers Cloudinary
-      let cloudinaryVideoUrl: string | null = null;
+      let finalVideoUrl: string | null = null;
       if (ad.videoUrl) {
-        cloudinaryVideoUrl = await uploadToCloudinary(ad.videoUrl, 'video');
-        if (cloudinaryVideoUrl) {
-          console.log(`  ☁️ Vidéo uploadée pour ${ad.advertiser}`);
+        finalVideoUrl = await uploadToCatbox(ad.videoUrl, 'video');
+        if (finalVideoUrl) {
+          console.log(`  📦 Vidéo uploadée vers Catbox pour ${ad.advertiser}`);
         }
       }
 
@@ -298,7 +297,7 @@ async function scrapeAds(keyword: string, country: string) {
           ad.libraryId, ad.advertiser, ad.productName, ad.text,
           ad.price, ad.destinationUrl, ad.cta, ad.startDate,
           ad.daysActive, ad.status, ad.country, ad.keyword, 
-          ad.score, cloudinaryImageUrl, cloudinaryVideoUrl
+          ad.score, finalImageUrl, finalVideoUrl
         ]
       );
       console.log(`Sauvegarde : ${ad.advertiser} (score ${ad.score}, ${ad.daysActive}j)`);
