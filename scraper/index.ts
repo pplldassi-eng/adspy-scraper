@@ -4,7 +4,6 @@ import { Pool } from 'pg';
 import axios from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import FormData from 'form-data';
-import { v2 as cloudinary } from 'cloudinary';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -76,17 +75,7 @@ async function uploadToCloudinary(
   fileUrl: string,
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
-  const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const preset = 'adspy_preset';
-  
-  if (!cloudName) {
-    console.log('⚠️ CLOUDINARY_CLOUD_NAME manquant');
-    return null;
-  }
-  
-  console.log(`\n🔍 [DEBUG] Début upload ${resourceType}`);
-  console.log(`   Cloud name  : "${cloudName}"`);
-  console.log(`   Preset      : "${preset}"`);
+  console.log(`\n🔍 [DEBUG] Début upload ${resourceType} vers Catbox`);
   console.log(`   File URL    : ${fileUrl.slice(0, 80)}...`);
   
   try {
@@ -116,56 +105,32 @@ async function uploadToCloudinary(
       return null;
     }
     
-    // 2. Upload vers Cloudinary via base64
-    const base64 = buffer.toString('base64');
-    const mimeType = resourceType === 'image' ? 'image/jpeg' : 'video/mp4';
-    const dataUri = `data:${mimeType};base64,${base64}`;
+    // 2. Upload vers Catbox.moe (gratuit, sans inscription)
+    const formData = new FormData();
+    formData.append('reqtype', 'fileupload');
+    const ext = resourceType === 'image' ? 'jpg' : 'mp4';
+    const filename = `adspy_${Date.now()}.${ext}`;
     
-    const formData = new URLSearchParams();
-    formData.append('file', dataUri);
-    formData.append('upload_preset', preset);
-    formData.append('folder', 'adspy-africa');
+    // Pour Catbox, on envoie le buffer directement avec un nom de fichier
+    formData.append('fileToUpload', buffer, { filename });
     
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
+    const uploadUrl = 'https://catbox.moe/user/api.php';
     console.log(`   📤 POST ${uploadUrl}`);
-    console.log(`   📦 Body size : ~${Math.round(formData.toString().length / 1024)} KB`);
     
-    const uploadRes = await axios.post(uploadUrl, formData.toString(), {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
+    const uploadRes = await axios.post(uploadUrl, formData, {
+      headers: formData.getHeaders(),
       timeout: 120000,
-      validateStatus: () => true,
     });
     
-    console.log(`   📥 Status : ${uploadRes.status}`);
+    const catboxUrl = uploadRes.data?.toString().trim();
+    console.log(`   ✅ Catbox URL : ${catboxUrl?.slice(0, 80)}`);
     
-    if (uploadRes.status >= 400) {
-      let errorMsg = 'Unknown error';
-      if (uploadRes.data) {
-        if (typeof uploadRes.data === 'string') {
-          errorMsg = uploadRes.data.slice(0, 500);
-        } else if (uploadRes.data.error) {
-          errorMsg = JSON.stringify(uploadRes.data.error).slice(0, 500);
-        } else {
-          errorMsg = JSON.stringify(uploadRes.data).slice(0, 500);
-        }
-      }
-      console.log(`   ❌ Cloudinary HTTP ${uploadRes.status} : ${errorMsg}`);
+    if (!catboxUrl || !catboxUrl.startsWith('http')) {
+      console.log(`   ❌ Catbox réponse invalide : ${catboxUrl?.slice(0, 200)}`);
       return null;
     }
     
-    const secureUrl = uploadRes.data?.secure_url;
-    if (!secureUrl) {
-      console.log(`   ❌ Pas de secure_url dans la réponse`);
-      console.log(`   Réponse : ${JSON.stringify(uploadRes.data).slice(0, 500)}`);
-      return null;
-    }
-    
-    console.log(`   ✅ Upload OK : ${secureUrl.slice(0, 80)}...`);
-    return secureUrl;
+    return catboxUrl;
     
   } catch (e: any) {
     console.log(`   ❌ Exception : ${e.message}`);
