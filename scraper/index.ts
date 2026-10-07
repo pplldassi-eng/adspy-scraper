@@ -1,7 +1,6 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
-import crypto from 'crypto';
 import axios from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 
@@ -76,11 +75,9 @@ async function uploadToCloudinary(
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
-  const apiKey = process.env.CLOUDINARY_API_KEY;
-  const apiSecret = process.env.CLOUDINARY_API_SECRET;
   
-  if (!cloudName || !apiKey || !apiSecret) {
-    console.log('⚠️ Cloudinary secrets manquants');
+  if (!cloudName) {
+    console.log('⚠️ Cloudinary cloud name manquant');
     return null;
   }
   
@@ -104,22 +101,10 @@ async function uploadToCloudinary(
     
     const buffer = Buffer.from(response.data);
     
-    // 2. Upload vers Cloudinary (signature)
-    const timestamp = Math.floor(Date.now() / 1000);
-    const folder = 'adspy-africa';
-    const paramsToSign = `folder=${folder}&timestamp=${timestamp}`;
-    const signature = crypto
-      .createHash('sha1')
-      .update(paramsToSign + apiSecret)
-      .digest('hex');
-    
-    // 3. Construire le FormData
+    // 2. Upload vers Cloudinary via Upload Preset (unsigned)
     const formData = new FormData();
     formData.append('file', new Blob([buffer]), 'media');
-    formData.append('api_key', apiKey);
-    formData.append('timestamp', String(timestamp));
-    formData.append('folder', folder);
-    formData.append('signature', signature);
+    formData.append('upload_preset', 'adspy_preset');
     
     const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
     
