@@ -3,6 +3,7 @@ import fs from 'fs';
 import { Pool } from 'pg';
 import axios from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import FormData from 'form-data';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -103,26 +104,27 @@ async function uploadToCloudinary(
     
     // 2. Upload vers Cloudinary via Upload Preset (unsigned)
     const formData = new FormData();
-    formData.append('file', new Blob([buffer]), 'media');
+    formData.append('file', buffer, {
+      filename: 'media.' + (resourceType === 'image' ? 'jpg' : 'mp4'),
+      contentType: resourceType === 'image' ? 'image/jpeg' : 'video/mp4',
+    });
     formData.append('upload_preset', 'adspy_preset');
     
     const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
     
-    const uploadRes = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
+    const uploadRes = await axios.post(uploadUrl, formData, {
+      headers: formData.getHeaders(),
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: 60000,
     });
     
-    if (!uploadRes.ok) {
-      const err = await uploadRes.text();
-      console.log(`  ❌ Upload Cloudinary échoué: ${uploadRes.status} ${err.slice(0, 200)}`);
-      return null;
-    }
-    
-    const data: any = await uploadRes.json();
-    return data.secure_url || null;
+    return uploadRes.data?.secure_url || null;
   } catch (e: any) {
-    console.log(`  ❌ Erreur Cloudinary: ${e.message}`);
+    const detail = e.response?.data 
+      ? JSON.stringify(e.response.data).slice(0, 300) 
+      : e.message;
+    console.log(`  ❌ Erreur Cloudinary: ${detail}`);
     return null;
   }
 }

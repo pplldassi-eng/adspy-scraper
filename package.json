@@ -10,7 +10,8 @@
     "playwright": "^1.48.0",
     "pg": "^8.13.0",
     "axios": "^1.7.0",
-    "https-proxy-agent": "^7.0.5"
+    "https-proxy-agent": "^7.0.5",
+    "form-data": "^4.0.1"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
