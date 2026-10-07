@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import axios from 'axios';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import FormData from 'form-data';
+import { v2 as cloudinary } from 'cloudinary';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -81,6 +82,11 @@ async function uploadToCloudinary(
     console.log('⚠️ Cloudinary cloud name manquant');
     return null;
   }
+
+  cloudinary.config({
+    cloud_name: cloudName,
+    secure: true,
+  });
   
   try {
     // 1. Télécharger le fichier via le proxy Flaregun
@@ -102,24 +108,23 @@ async function uploadToCloudinary(
     
     const buffer = Buffer.from(response.data);
     
-    // 2. Upload vers Cloudinary via Upload Preset (unsigned)
-    const formData = new FormData();
-    formData.append('file', buffer, {
-      filename: 'media.' + (resourceType === 'image' ? 'jpg' : 'mp4'),
-      contentType: resourceType === 'image' ? 'image/jpeg' : 'video/mp4',
+    // 2. Upload vers Cloudinary via SDK officiel
+    const result = await new Promise<any>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          upload_preset: 'adspy_preset',
+          folder: 'adspy-africa',
+          resource_type: resourceType,
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      stream.end(buffer);
     });
-    formData.append('upload_preset', 'adspy_preset');
     
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`;
-    
-    const uploadRes = await axios.post(uploadUrl, formData, {
-      headers: formData.getHeaders(),
-      maxBodyLength: Infinity,
-      maxContentLength: Infinity,
-      timeout: 60000,
-    });
-    
-    return uploadRes.data?.secure_url || null;
+    return result.secure_url || null;
   } catch (e: any) {
     const detail = e.response?.data 
       ? JSON.stringify(e.response.data).slice(0, 300) 
