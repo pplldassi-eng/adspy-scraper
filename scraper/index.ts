@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import type { BrowserContext } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
+import { v2 as cloudinary } from 'cloudinary';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -9,6 +10,12 @@ const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+});
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 function scoreEcommerce(ad: any): number {
@@ -103,26 +110,27 @@ async function downloadMedia(context: BrowserContext, url: string) {
   };
 }
 
-export async function uploadToCatbox(
+export async function uploadToCloudinary(
   context: BrowserContext,
   fileUrl: string,
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
   try {
-    const { buffer, contentType } = await downloadMedia(context, fileUrl);
-    const ext = resourceType === 'video' ? 'mp4'
-      : contentType.includes('png') ? 'png'
-      : contentType.includes('webp') ? 'webp' : 'jpg';
-    const form = new FormData();
-    form.append('reqtype', 'fileupload');
-    form.append('fileToUpload', new Blob([buffer], { type: contentType }), `ad_${Date.now()}.${ext}`);
-    const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form });
-    const text = (await res.text()).trim();
-    if (!res.ok || !text.startsWith('https://')) {
-      console.error(`❌ UPLOAD Catbox ${res.status} : ${text.slice(0, 100)}`);
-      return null;
-    }
-    return text;
+    const { buffer } = await downloadMedia(context, fileUrl);
+    return await new Promise<string | null>((resolve) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { resource_type: resourceType, folder: 'adspy' },
+        (err, result) => {
+          if (err || !result) {
+            console.error(`❌ Cloudinary ${resourceType} :`, err?.message);
+            return resolve(null);
+          }
+          console.log(`  📦 ${resourceType} → ${result.secure_url.slice(0, 70)}`);
+          resolve(result.secure_url);
+        }
+      );
+      stream.end(buffer);
+    });
   } catch (e: any) {
     console.error(`❌ ${resourceType} : ${e.message}`);
     return null;
@@ -232,20 +240,20 @@ async function scrapeAds(keyword: string, country: string) {
 
   for (const ad of ads) {
     try {
-      // Upload vers Catbox.moe
+      // Upload vers Cloudinary
       let finalImageUrl: string | null = null;
       if (ad.imageUrl) {
-        finalImageUrl = await uploadToCatbox(context, ad.imageUrl, 'image');
+        finalImageUrl = await uploadToCloudinary(context, ad.imageUrl, 'image');
         if (finalImageUrl) {
-          console.log(`  📦 Image uploadée vers Catbox pour ${ad.advertiser}`);
+          console.log(`  📦 Image uploadée vers Cloudinary pour ${ad.advertiser}`);
         }
       }
       
       let finalVideoUrl: string | null = null;
       if (ad.videoUrl) {
-        finalVideoUrl = await uploadToCatbox(context, ad.videoUrl, 'video');
+        finalVideoUrl = await uploadToCloudinary(context, ad.videoUrl, 'video');
         if (finalVideoUrl) {
-          console.log(`  📦 Vidéo uploadée vers Catbox pour ${ad.advertiser}`);
+          console.log(`  📦 Vidéo uploadée vers Cloudinary pour ${ad.advertiser}`);
         }
       }
 
