@@ -1,9 +1,7 @@
 import { chromium } from 'playwright';
+import type { BrowserContext } from 'playwright';
 import fs from 'fs';
 import { Pool } from 'pg';
-import axios from 'axios';
-import { HttpsProxyAgent } from 'https-proxy-agent';
-import FormData from 'form-data';
 
 const KEYWORD = process.env.SCRAPE_KEYWORD || 'livraison gratuite';
 const COUNTRY = process.env.SCRAPE_COUNTRY || 'CI';
@@ -71,73 +69,62 @@ function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-async function uploadToCatbox(
+export function cleanUrl(u: string): string {
+  return u
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u0025/g, '%')
+    .replace(/&amp;/g, '&')
+    .replace(/\\\//g, '/')
+    .replace(/\\+$/, '');
+}
+
+export function extractMediaUrls(html: string) {
+  const re = /https:(?:\\?\/){2}(?:scontent|video)[^"'\s<>]*/g;
+  const all = [...new Set((html.match(re) || []).map(cleanUrl))];
+  const signed = all.filter(u => /[?&]oh=/.test(u) && /[?&]oe=/.test(u));
+  const path = (u: string) => u.split('?')[0];
+  const images = signed.filter(u => /\.(jpg|jpeg|png|webp)$/i.test(path(u)));
+  const videos = signed.filter(u => /\.mp4$/i.test(path(u)));
+  return { images, videos, total: all.length, signed: signed.length };
+}
+
+async function downloadMedia(context: BrowserContext, url: string) {
+  const r = await context.request.get(url, {
+    headers: { Referer: 'https://www.facebook.com/' },
+    timeout: 60000,
+  });
+  if (!r.ok()) {
+    const body = (await r.text()).slice(0, 80);
+    throw new Error(`DOWNLOAD HTTP ${r.status()} : ${body}`);
+  }
+  return {
+    buffer: await r.body(),
+    contentType: r.headers()['content-type'] || 'application/octet-stream',
+  };
+}
+
+export async function uploadToCatbox(
+  context: BrowserContext,
   fileUrl: string,
   resourceType: 'image' | 'video'
 ): Promise<string | null> {
-  console.log(`\n🔍 [DEBUG] Début upload ${resourceType} vers Catbox`);
-  console.log(`   File URL    : ${fileUrl.slice(0, 80)}...`);
-  
   try {
-    // 1. Télécharger le fichier via le proxy Flaregun
-    const agent = new HttpsProxyAgent('http://localhost:8080');
-    
-    const response = await axios.get(fileUrl, {
-      responseType: 'arraybuffer',
-      timeout: 30000,
-      httpAgent: agent,
-      httpsAgent: agent,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.facebook.com/',
-        'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-      },
-      maxRedirects: 5,
-      validateStatus: (status) => status < 400,
-    });
-    
-    const buffer = Buffer.from(response.data);
-    const sizeKB = Math.round(buffer.length / 1024);
-    console.log(`   ✅ Download OK : ${sizeKB} KB`);
-    
-    if (buffer.length === 0) {
-      console.log(`   ❌ Buffer vide, abandon`);
+    const { buffer, contentType } = await downloadMedia(context, fileUrl);
+    const ext = resourceType === 'video' ? 'mp4'
+      : contentType.includes('png') ? 'png'
+      : contentType.includes('webp') ? 'webp' : 'jpg';
+    const form = new FormData();
+    form.append('reqtype', 'fileupload');
+    form.append('fileToUpload', new Blob([buffer], { type: contentType }), `ad_${Date.now()}.${ext}`);
+    const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form });
+    const text = (await res.text()).trim();
+    if (!res.ok || !text.startsWith('https://')) {
+      console.error(`❌ UPLOAD Catbox ${res.status} : ${text.slice(0, 100)}`);
       return null;
     }
-    
-    // 2. Upload vers Catbox.moe (gratuit, sans inscription)
-    const formData = new FormData();
-    formData.append('reqtype', 'fileupload');
-    const ext = resourceType === 'image' ? 'jpg' : 'mp4';
-    const filename = `adspy_${Date.now()}.${ext}`;
-    
-    // Pour Catbox, on envoie le buffer directement avec un nom de fichier
-    formData.append('fileToUpload', buffer, { filename });
-    
-    const uploadUrl = 'https://catbox.moe/user/api.php';
-    console.log(`   📤 POST ${uploadUrl}`);
-    
-    const uploadRes = await axios.post(uploadUrl, formData, {
-      headers: formData.getHeaders(),
-      timeout: 120000,
-    });
-    
-    const catboxUrl = uploadRes.data?.toString().trim();
-    console.log(`   ✅ Catbox URL : ${catboxUrl?.slice(0, 80)}`);
-    
-    if (!catboxUrl || !catboxUrl.startsWith('http')) {
-      console.log(`   ❌ Catbox réponse invalide : ${catboxUrl?.slice(0, 200)}`);
-      return null;
-    }
-    
-    return catboxUrl;
-    
+    return text;
   } catch (e: any) {
-    console.log(`   ❌ Exception : ${e.message}`);
-    if (e.response) {
-      console.log(`   Status  : ${e.response.status}`);
-      console.log(`   Data    : ${JSON.stringify(e.response.data).slice(0, 500)}`);
-    }
+    console.error(`❌ ${resourceType} : ${e.message}`);
     return null;
   }
 }
@@ -173,24 +160,8 @@ async function scrapeAds(keyword: string, country: string) {
   const pageHtml: string = await page.content();
   fs.writeFileSync(`debug/${keyword}-${country}-page.html`, pageHtml);
   
-  // Extraire TOUTES les URLs d'images scontent depuis le HTML
-  const allImages = pageHtml.match(/https:\\?\/\\?\/scontent[^"'\s\\]+\.(?:jpg|jpeg|png|webp)/gi) || [];
-  const cleanImages = allImages.map(u => u.replace(/\\\//g, '/'));
-  
-  // Extraire TOUTES les URLs de vidéos depuis le HTML
-  const allVideos = pageHtml.match(/https:\\?\/\\?\/video[^"'\s\\]+\.mp4/gi) || [];
-  const cleanVideos = allVideos.map(u => u.replace(/\\\//g, '/'));
-  
-  // Dédoublonner
-  const uniqueImages = [...new Set(cleanImages)];
-  const uniqueVideos = [...new Set(cleanVideos)];
-  
-  console.log(`📸 ${uniqueImages.length} images trouvées dans le HTML`);
-  console.log(`🎥 ${uniqueVideos.length} vidéos trouvées dans le HTML`);
-  
-  if (uniqueImages.length > 0) {
-    console.log(`   Exemple: ${uniqueImages[0].slice(0, 100)}`);
-  }
+  const { images: uniqueImages, videos: uniqueVideos, total, signed } = extractMediaUrls(pageHtml);
+  console.log(`🔗 ${total} liens trouvés, ${signed} signés (oh+oe)`);
 
   const adBlocks = pageText.split(/(?=(?:Actif|Inactif)\s*\n\s*ID dans la bibliothèque\s*:)/);
   console.log(`${adBlocks.length} blocs bruts detectes`);
@@ -264,7 +235,7 @@ async function scrapeAds(keyword: string, country: string) {
       // Upload vers Catbox.moe
       let finalImageUrl: string | null = null;
       if (ad.imageUrl) {
-        finalImageUrl = await uploadToCatbox(ad.imageUrl, 'image');
+        finalImageUrl = await uploadToCatbox(context, ad.imageUrl, 'image');
         if (finalImageUrl) {
           console.log(`  📦 Image uploadée vers Catbox pour ${ad.advertiser}`);
         }
@@ -272,7 +243,7 @@ async function scrapeAds(keyword: string, country: string) {
       
       let finalVideoUrl: string | null = null;
       if (ad.videoUrl) {
-        finalVideoUrl = await uploadToCatbox(ad.videoUrl, 'video');
+        finalVideoUrl = await uploadToCatbox(context, ad.videoUrl, 'video');
         if (finalVideoUrl) {
           console.log(`  📦 Vidéo uploadée vers Catbox pour ${ad.advertiser}`);
         }
