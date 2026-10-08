@@ -137,6 +137,19 @@ export async function uploadToCloudinary(
   }
 }
 
+async function gotoWithRetry(page: any, url: string, tries = 4) {
+  for (let i = 1; i <= tries; i++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      return;
+    } catch (e: any) {
+      console.error(`⚠️ goto essai ${i}/${tries} : ${e.message.split('\n')[0]}`);
+      if (i === tries) throw e;
+      await page.waitForTimeout(3000 * i);
+    }
+  }
+}
+
 async function scrapeAds(keyword: string, country: string) {
   const browser = await chromium.launch({
     headless: true,
@@ -152,7 +165,7 @@ async function scrapeAds(keyword: string, country: string) {
   const url = `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=${country}&q=${encodeURIComponent(keyword)}&search_type=keyword_unordered&media_type=all`;
 
   console.log(`Recherche : "${keyword}" en ${country} via Flaregun proxy`);
-  await page.goto(url, { waitUntil: 'networkidle', timeout: 90000 });
+  await gotoWithRetry(page, url);
   await page.waitForTimeout(8000);
 
   for (let i = 0; i < 15; i++) {
@@ -293,7 +306,7 @@ async function main() {
   try {
     await scrapeAds(KEYWORD, COUNTRY);
   } catch (e) {
-    console.error(`Erreur "${KEYWORD}" (${COUNTRY}):`, e);
+    console.error(`❌ Erreur "${KEYWORD}" (${COUNTRY}):`, e);
   }
   await pool.end();
 }
